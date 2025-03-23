@@ -44,13 +44,6 @@ def main(args):
     # Setup config node
     cfg = setup_config(args,
                        random_seed=args.random_seed, is_testing=False, ood=False)
-    # For debugging only
-    #cfg.defrost()
-    #cfg.DATALOADER.NUM_WORKERS = 0
-    #cfg.SOLVER.IMS_PER_BATCH = 1
-
-    # Eval only mode to produce mAP results
-    # Build Trainer from config node. Begin Training.
 
     trainer = Trainer(cfg)
 
@@ -65,10 +58,25 @@ def main(args):
             verify_results(cfg, res)
         return res
 
-    trainer.resume_or_load(resume=args.resume)
+    # Explicitly handle resume with optimizer reset
+    if args.resume and trainer.checkpointer.has_checkpoint():
+        checkpoint_file = trainer.checkpointer.get_checkpoint_file()
+        print(f"Loading checkpoint from {checkpoint_file}")
+        import torch
+        checkpoint = torch.load(checkpoint_file, map_location='cpu')
+        print(f"Checkpoint keys: {checkpoint.keys()}")
+        trainer.model.load_state_dict(checkpoint['model'])
+        trainer.start_iter = checkpoint.get('iteration', 0)  # Set start_iter
+        print(f"Resuming from iteration: {trainer.start_iter}")
+        trainer.optimizer = Trainer.build_optimizer(cfg, trainer.model)
+        trainer.scheduler = trainer.build_lr_scheduler(cfg, trainer.optimizer)
+        print(f"Optimizer reset with BASE_LR: {cfg.SOLVER.BASE_LR}")
+    else:
+        print("Starting fresh training (no checkpoint)")
+        trainer.resume_or_load(resume=False)
+        trainer.start_iter = 0
 
-    return trainer.train()
-
+    return trainer.train()  # Use default start_iter and max_iter from cfg
 
 if __name__ == "__main__":
     # Create arg parser
